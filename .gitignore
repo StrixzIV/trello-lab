@@ -3,3 +3,4 @@ build/
 Tello.egg-info/
 dist/
 trello-env/
+*.avi
