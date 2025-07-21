@@ -1,5 +1,9 @@
 import cv2
+import uuid
+import time
 import numpy as np
+
+from threading import Thread
 from djitellopy import Tello
 
 
@@ -9,7 +13,8 @@ height = 400  # HEIGHT OF THE IMAGE
 deadZone =100
 ######################################################################
 
-startCounter = 1 #1not fly
+is_idle = 0 #1not fly
+is_recording = True
 
 # CONNECT TO TELLO
 me = Tello()
@@ -20,9 +25,20 @@ me.up_down_velocity = 0
 me.yaw_velocity = 0
 me.speed = 0
 
+# HSV params (RED whiteboard ereaser)
+h_min = 0
+h_max = 179
+s_min = 150
+s_max = 255
+v_min = 0
+v_max = 220
 
+# Contour Area params
+threshold1 = 0
+threshold2 = 203
+areaMin = 15249
 
-print(me.get_battery())
+print(f'Battery: {me.get_battery()}%')
 
 me.streamoff()
 me.streamon()
@@ -35,28 +51,23 @@ frameHeight = height
 # cap.set(4, frameHeight)
 # cap.set(10,200)
 
-
+global dir
 global imgContour
-
-global dir;
-def empty(a):
-    pass
 
 cv2.namedWindow("HSV")
 cv2.resizeWindow("HSV",640,240)
-cv2.createTrackbar("HUE Min","HSV",20,179,empty)
-cv2.createTrackbar("HUE Max","HSV",40,179,empty)
-cv2.createTrackbar("SAT Min","HSV",148,255,empty)
-cv2.createTrackbar("SAT Max","HSV",255,255,empty)
-cv2.createTrackbar("VALUE Min","HSV",89,255,empty)
-cv2.createTrackbar("VALUE Max","HSV",255,255,empty)
+cv2.createTrackbar("HUE Min","HSV",20,179, lambda _value: None)
+cv2.createTrackbar("HUE Max","HSV",40,179, lambda _value: None)
+cv2.createTrackbar("SAT Min","HSV",148,255, lambda _value: None)
+cv2.createTrackbar("SAT Max","HSV",255,255, lambda _value: None)
+cv2.createTrackbar("VALUE Min","HSV",89,255, lambda _value: None)
+cv2.createTrackbar("VALUE Max","HSV",255,255, lambda _value: None)
 
 cv2.namedWindow("Parameters")
 cv2.resizeWindow("Parameters",640,240)
-cv2.createTrackbar("Threshold1","Parameters",166,255,empty)
-cv2.createTrackbar("Threshold2","Parameters",171,255,empty)
-cv2.createTrackbar("Area","Parameters",1750,30000,empty)
-
+cv2.createTrackbar("Threshold1","Parameters",166,255, lambda _value: None)
+cv2.createTrackbar("Threshold2","Parameters",171,255, lambda _value: None)
+cv2.createTrackbar("Area","Parameters",1750,30000, lambda _value: None)
 
 def stackImages(scale,imgArray):
     rows = len(imgArray)
@@ -94,7 +105,6 @@ def getContours(img,imgContour):
     contours, hierarchy = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        areaMin = cv2.getTrackbarPos("Area", "Parameters")
         if area > areaMin:
             cv2.drawContours(imgContour, cnt, -1, (255, 0, 255), 7)
             peri = cv2.arcLength(cnt, True)
@@ -136,6 +146,7 @@ def display(img):
     cv2.line(img, (0,int(frameHeight / 2) - deadZone), (frameWidth,int(frameHeight / 2) - deadZone), (255, 255, 0), 3)
     cv2.line(img, (0, int(frameHeight / 2) + deadZone), (frameWidth, int(frameHeight / 2) + deadZone), (255, 255, 0), 3)
 
+
 while True:
 
     # GET THE IMAGE FROM TELLO
@@ -145,24 +156,25 @@ while True:
     imgContour = img.copy()
     imgHsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    h_min = cv2.getTrackbarPos("HUE Min","HSV")
-    h_max = cv2.getTrackbarPos("HUE Max", "HSV")
-    s_min = cv2.getTrackbarPos("SAT Min", "HSV")
-    s_max = cv2.getTrackbarPos("SAT Max", "HSV")
-    v_min = cv2.getTrackbarPos("VALUE Min", "HSV")
-    v_max = cv2.getTrackbarPos("VALUE Max", "HSV")
-
-
+    # Edit here (HSV)
+    # h_min = cv2.getTrackbarPos("HUE Min","HSV")
+    # h_max = cv2.getTrackbarPos("HUE Max", "HSV")
+    # s_min = cv2.getTrackbarPos("SAT Min", "HSV")
+    # s_max = cv2.getTrackbarPos("SAT Max", "HSV")
+    # v_min = cv2.getTrackbarPos("VALUE Min", "HSV")
+    # v_max = cv2.getTrackbarPos("VALUE Max", "HSV")
+    
+    # Edit here (MASK)
     lower = np.array([h_min,s_min,v_min])
     upper = np.array([h_max,s_max,v_max])
+    
     mask = cv2.inRange(imgHsv,lower,upper)
     result = cv2.bitwise_and(img,img, mask = mask)
     mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
     imgBlur = cv2.GaussianBlur(result, (7, 7), 1)
     imgGray = cv2.cvtColor(imgBlur, cv2.COLOR_BGR2GRAY)
-    threshold1 = cv2.getTrackbarPos("Threshold1", "Parameters")
-    threshold2 = cv2.getTrackbarPos("Threshold2", "Parameters")
+    
     imgCanny = cv2.Canny(imgGray, threshold1, threshold2)
     kernel = np.ones((5, 5))
     imgDil = cv2.dilate(imgCanny, kernel, iterations=1)
@@ -170,21 +182,28 @@ while True:
     display(imgContour)
 
     ################# FLIGHT
-    if startCounter == 0:
+    if is_idle == 0:
        me.takeoff()
-       startCounter = 1
-
+       is_idle = 1
 
     if dir == 1:
        me.yaw_velocity = -60
+       
     elif dir == 2:
        me.yaw_velocity = 60
+       
     elif dir == 3:
        me.up_down_velocity= 60
+       
     elif dir == 4:
        me.up_down_velocity= -60
+       
     else:
-       me.left_right_velocity = 0; me.for_back_velocity = 0;me.up_down_velocity = 0; me.yaw_velocity = 0
+       me.left_right_velocity = 0
+       me.for_back_velocity = 0
+       me.up_down_velocity = 0
+       me.yaw_velocity = 0
+
    # SEND VELOCITY VALUES TO TELLO
     if me.send_rc_control:
        me.send_rc_control(me.left_right_velocity, me.for_back_velocity, me.up_down_velocity, me.yaw_velocity)
@@ -197,5 +216,5 @@ while True:
         me.land()
         break
 
-# cap.release()
+
 cv2.destroyAllWindows()
